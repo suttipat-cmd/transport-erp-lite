@@ -1,7 +1,7 @@
-/* Transport ERP Lite v0.2.1-google-sheets */
+/* Transport ERP Lite v0.3.0-modal-layout */
 'use strict';
 
-const APP_VERSION = 'v0.2.1-google-sheets';
+const APP_VERSION = 'v0.3.0-modal-layout';
 const STORAGE_KEY = 'transport_erp_lite_v020';
 const CONFIG_KEY = 'transport_erp_lite_config_v020';
 
@@ -50,6 +50,7 @@ let draftSpecials = [];
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 const versionBadge = document.getElementById('versionBadge');
+const modalRoot = document.getElementById('modalRoot');
 
 document.addEventListener('DOMContentLoaded', initApp);
 
@@ -71,7 +72,20 @@ function bindGlobalEvents() {
     await loadRemoteData(true);
     renderPage(currentPage);
   });
+
+  modalRoot.addEventListener('click', (event) => {
+    if (event.target.matches('[data-close-modal]')) {
+      closeActiveModal();
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && modalRoot.classList.contains('show')) {
+      closeActiveModal();
+    }
+  });
 }
+
 
 function renderPage(page) {
   currentPage = page;
@@ -97,26 +111,28 @@ function renderPage(page) {
 function renderDashboard() {
   const section = el('section');
   const totals = computeDashboardTotals();
+  const pendingTrips = state.trip_runs.filter(t => t.status === 'draft').length;
+  const pendingQueue = state.accounting_queue_items.filter(q => q.status === 'pending').length;
 
   section.innerHTML = `
     <div class="page-title">
       <div>
         <p class="eyebrow">Dashboard</p>
-        <h2>ภาพรวมระบบ</h2>
+        <h2>ภาพรวม</h2>
       </div>
-      <p class="muted">ข้อมูลมาจากเที่ยววิ่ง, settlement และ accounting queue</p>
+      <button class="btn" data-open-trip-modal type="button">+ เที่ยววิ่ง</button>
     </div>
 
     <div class="grid cards">
       <article class="card metric"><span>ลูกค้า</span><strong>${state.customers.length}</strong></article>
-      <article class="card metric"><span>เที่ยววิ่งทั้งหมด</span><strong>${state.trip_runs.length}</strong></article>
-      <article class="card metric"><span>รออนุมัติเที่ยววิ่ง</span><strong>${state.trip_runs.filter(t => t.status === 'draft').length}</strong></article>
-      <article class="card metric"><span>Queue บัญชีค้าง</span><strong>${state.accounting_queue_items.filter(q => q.status === 'pending').length}</strong></article>
+      <article class="card metric"><span>เที่ยววิ่ง</span><strong>${state.trip_runs.length}</strong></article>
+      <article class="card metric"><span>รออนุมัติ</span><strong>${pendingTrips}</strong></article>
+      <article class="card metric"><span>Queue บัญชี</span><strong>${pendingQueue}</strong></article>
     </div>
 
     <div class="grid two">
       <article class="card">
-        <h3>กำไรขาดทุนรวมจากเที่ยววิ่ง</h3>
+        <h3>กำไรขาดทุนรวม</h3>
         <dl class="summary-list">
           <div><dt>รายรับก่อน WHT</dt><dd>${money(totals.grossRevenue)}</dd></div>
           <div><dt>WHT รับ</dt><dd>${money(totals.incomeWht)}</dd></div>
@@ -126,25 +142,36 @@ function renderDashboard() {
       </article>
 
       <article class="card">
-        <h3>Flow ปัจจุบัน</h3>
-        <ol class="flow-list">
-          <li>คีย์เที่ยววิ่งงาน</li>
-          <li>Operation อนุมัติ</li>
-          <li>รถบริษัทเข้า HR Settlement / รถร่วมเข้า Subcontractor Settlement</li>
-          <li>Settlement อนุมัติแล้วส่งต่อ Accounting Queue</li>
-          <li>บัญชีสร้าง Bill / Inv / RV / PV</li>
-        </ol>
+        <h3>สถานะงาน</h3>
+        <dl class="summary-list compact">
+          <div><dt>HR รอตรวจ</dt><dd>${state.hr_settlement_items.filter(i => i.status === 'pending').length}</dd></div>
+          <div><dt>รถร่วมรอตรวจ</dt><dd>${state.subcontractor_settlement_items.filter(i => i.status === 'pending').length}</dd></div>
+          <div><dt>เอกสารบัญชี</dt><dd>${state.accounting_documents.length}</dd></div>
+        </dl>
       </article>
     </div>
 
     <article class="card">
-      <h3>เที่ยววิ่งล่าสุด</h3>
+      <div class="section-heading">
+        <h3>เที่ยววิ่งล่าสุด</h3>
+        <button class="btn secondary small" data-page-shortcut="trips" type="button">ดูทั้งหมด</button>
+      </div>
       ${renderTripTableHtml(state.trip_runs.slice().reverse().slice(0, 5), false)}
     </article>
   `;
 
+  section.addEventListener('click', (event) => {
+    if (event.target.closest('[data-open-trip-modal]')) {
+      openTripModal();
+      return;
+    }
+    const shortcut = event.target.closest('[data-page-shortcut]');
+    if (shortcut) renderPage(shortcut.dataset.pageShortcut);
+  });
+
   return section;
 }
+
 
 function renderCustomers() {
   const section = el('section');
@@ -152,188 +179,60 @@ function renderCustomers() {
     <div class="page-title">
       <div>
         <p class="eyebrow">Customers</p>
-        <h2>เมนูลูกค้า</h2>
+        <h2>ลูกค้า</h2>
       </div>
-      <p class="muted">กำหนด default รายได้, WHT, VAT และ credit term</p>
+      <button class="btn" data-open-customer-modal type="button">+ เพิ่มลูกค้า</button>
     </div>
 
-    <div class="grid two">
-      <form id="customerForm" class="card form-card">
-        <h3>เพิ่มลูกค้า</h3>
-        <label>ชื่อลูกค้า
-          <input name="name" required placeholder="เช่น บริษัท ขนส่งตัวอย่าง จำกัด" />
-        </label>
-        <label>เลขผู้เสียภาษี
-          <input name="tax_id" placeholder="01055..." />
-        </label>
-        <label>ที่อยู่ใบกำกับภาษี
-          <textarea name="billing_address" rows="3"></textarea>
-        </label>
-        <div class="form-grid">
-          <label>รูปแบบรายได้
-            <select name="revenue_type">
-              ${optionsHtml(REVENUE_TYPES)}
-            </select>
-          </label>
-          <label>Credit term (วัน)
-            <input name="credit_term_days" type="number" min="0" value="30" />
-          </label>
-          <label>Default WHT %
-            <input name="default_wht_rate" type="number" step="0.01" min="0" value="1" />
-          </label>
-          <label>Default VAT %
-            <input name="default_vat_rate" type="number" step="0.01" min="0" value="0" />
-          </label>
-        </div>
-        <button class="btn" type="submit">บันทึกลูกค้า</button>
-      </form>
-
-      <article class="card">
-        <h3>รายการลูกค้า</h3>
-        ${renderCustomersTableHtml()}
-      </article>
-    </div>
+    <article class="card">
+      ${renderCustomersTableHtml()}
+    </article>
   `;
 
-  section.querySelector('#customerForm').addEventListener('submit', handleCreateCustomer);
+  section.querySelector('[data-open-customer-modal]').addEventListener('click', openCustomerModal);
   return section;
 }
 
+
 function renderTrips() {
   const section = el('section');
-
-  if (draftExpenses.length === 0) {
-    draftExpenses.push(defaultExpenseDraft());
-  }
-  if (draftSpecials.length === 0) {
-    draftSpecials.push(defaultSpecialDraft());
-  }
 
   section.innerHTML = `
     <div class="page-title">
       <div>
         <p class="eyebrow">Trip Runs</p>
-        <h2>คีย์เที่ยววิ่งงาน</h2>
+        <h2>เที่ยววิ่งงาน</h2>
       </div>
-      <p class="muted">คีย์ครั้งเดียว แล้วระบบแตกไป HR / รถร่วม / บัญชี</p>
+      <button class="btn" data-open-trip-modal type="button">+ คีย์เที่ยววิ่ง</button>
     </div>
 
-    <form id="tripForm" class="card form-card wide">
-      <div class="section-heading">
-        <h3>ข้อมูลเที่ยววิ่ง</h3>
-        <span class="badge">Operation</span>
-      </div>
-
-      <div class="form-grid four">
-        <label>ลูกค้า
-          <select name="customer_id" required>
-            <option value="">เลือกลูกค้า</option>
-            ${state.customers.map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`).join('')}
-          </select>
-        </label>
-        <label>วันที่วิ่ง
-          <input name="trip_date" type="date" required value="${todayISO()}" />
-        </label>
-        <label>เส้นทาง
-          <input name="route_name" required placeholder="เช่น กรุงเทพฯ - ชลบุรี" />
-        </label>
-        <label>ประเภทรถ
-          <input name="vehicle_type" placeholder="เช่น 6 ล้อ / 10 ล้อ" />
-        </label>
-      </div>
-
-      <div class="form-grid four">
-        <label>รูปแบบรถ
-          <select name="vehicle_mode">
-            ${optionsHtml(VEHICLE_MODES)}
-          </select>
-        </label>
-        <label>ทะเบียน / รถ
-          <input name="vehicle_no" placeholder="70-1234" />
-        </label>
-        <label>พขร.
-          <input name="driver_name" placeholder="ชื่อคนขับรถบริษัท" />
-        </label>
-        <label>ผรม. / รถร่วม
-          <input name="subcontractor_name" placeholder="ชื่อรถร่วม / ผู้รับเหมา" />
-        </label>
-      </div>
-
-      <div class="form-grid four">
-        <label>ค่าขนส่งจากลูกค้า
-          <input name="freight_income_amount" type="number" step="0.01" min="0" value="0" />
-        </label>
-        <label>WHT ค่าขนส่ง %
-          <input name="freight_wht_rate" type="number" step="0.01" min="0" value="1" />
-        </label>
-        <label>VAT รับ %
-          <input name="freight_vat_rate" type="number" step="0.01" min="0" value="0" />
-        </label>
-        <label>ค่าเที่ยว พขร.
-          <input name="driver_trip_pay" type="number" step="0.01" min="0" value="0" />
-        </label>
-      </div>
-
-      <div class="form-grid four">
-        <label>รายจ่ายค่าจ้างรถร่วม
-          <input name="subcontractor_pay_amount" type="number" step="0.01" min="0" value="0" />
-        </label>
-        <label>WHT จ่ายรถร่วม %
-          <input name="subcontractor_wht_rate" type="number" step="0.01" min="0" value="0" />
-        </label>
-        <label>VAT จ่ายรถร่วม %
-          <input name="subcontractor_vat_rate" type="number" step="0.01" min="0" value="0" />
-        </label>
-        <label>หมายเหตุ
-          <input name="note" />
-        </label>
-      </div>
-
-      <div class="split-tabs">
-        <section class="panel">
-          <div class="section-heading">
-            <h3>ค่าใช้จ่ายปกติ</h3>
-            <button class="btn secondary small" id="addExpenseBtn" type="button">+ เพิ่มค่าใช้จ่าย</button>
-          </div>
-          <div id="expenseDraftList">${draftExpenses.map(renderExpenseDraftHtml).join('')}</div>
-        </section>
-
-        <section class="panel">
-          <div class="section-heading">
-            <h3>ค่าพิเศษ</h3>
-            <button class="btn secondary small" id="addSpecialBtn" type="button">+ เพิ่มค่าพิเศษ</button>
-          </div>
-          <div id="specialDraftList">${draftSpecials.map(renderSpecialDraftHtml).join('')}</div>
-        </section>
-      </div>
-
-      <section class="panel">
-        <div class="section-heading">
-          <h3>Tab สรุปกำไรขาดทุน</h3>
-          <span class="muted">คำนวณจากข้อมูลในฟอร์ม</span>
-        </div>
-        <div id="liveProfitSummary"></div>
-      </section>
-
-      <div class="form-actions">
-        <button class="btn" type="submit">บันทึกเที่ยววิ่ง</button>
-        <button class="btn secondary" id="clearTripDraftBtn" type="button">ล้างแบบร่าง</button>
-      </div>
-    </form>
-
     <article class="card">
-      <div class="section-heading">
-        <h3>รายการเที่ยววิ่ง</h3>
-        <span class="muted">กดอนุมัติเพื่อส่งต่อ Settlement / Accounting Queue</span>
-      </div>
       ${renderTripTableHtml(state.trip_runs.slice().reverse(), true)}
     </article>
   `;
 
-  bindTripFormEvents(section);
-  updateLiveProfitSummary(section.querySelector('#tripForm'));
+  section.addEventListener('click', (event) => {
+    const openButton = event.target.closest('[data-open-trip-modal]');
+    if (openButton) {
+      openTripModal();
+      return;
+    }
+
+    const approveButton = event.target.closest('[data-approve-trip]');
+    if (approveButton) {
+      handleApproveTrip(approveButton.dataset.approveTrip);
+      return;
+    }
+
+    const summaryButton = event.target.closest('[data-view-trip-summary]');
+    if (summaryButton) {
+      openTripSummaryModal(summaryButton.dataset.viewTripSummary);
+    }
+  });
+
   return section;
 }
+
 
 function renderHrSettlement() {
   return renderSettlementPage({
@@ -363,11 +262,10 @@ function renderSettlementPage({ title, subtitle, tableName, targetLabel }) {
         <p class="eyebrow">Settlement</p>
         <h2>${escapeHTML(title)}</h2>
       </div>
-      <p class="muted">${escapeHTML(subtitle)}</p>
+      <span class="badge">${items.filter(i => i.status === 'pending').length} pending</span>
     </div>
 
     <article class="card">
-      <h3>รายการรอตรวจ ${escapeHTML(targetLabel)}</h3>
       ${renderSettlementTableHtml(items, tableName)}
     </article>
   `;
@@ -381,6 +279,7 @@ function renderSettlementPage({ title, subtitle, tableName, targetLabel }) {
   return section;
 }
 
+
 function renderAccounting() {
   const section = el('section');
   const queue = state.accounting_queue_items.slice().reverse();
@@ -390,20 +289,27 @@ function renderAccounting() {
     <div class="page-title">
       <div>
         <p class="eyebrow">Accounting</p>
-        <h2>Accounting Queue</h2>
+        <h2>บัญชี</h2>
       </div>
-      <p class="muted">บัญชีรับข้อมูลที่ผ่าน Operation / Settlement แล้ว</p>
     </div>
 
-    <article class="card">
-      <h3>รายการรอทำเอกสาร</h3>
-      ${renderAccountingQueueHtml(queue)}
-    </article>
+    <div class="grid two">
+      <article class="card">
+        <div class="section-heading">
+          <h3>Queue</h3>
+          <span class="badge">${state.accounting_queue_items.filter(q => q.status === 'pending').length} pending</span>
+        </div>
+        ${renderAccountingQueueHtml(queue)}
+      </article>
 
-    <article class="card">
-      <h3>เอกสารที่สร้างแล้ว</h3>
-      ${renderAccountingDocumentsHtml(docs)}
-    </article>
+      <article class="card">
+        <div class="section-heading">
+          <h3>เอกสาร</h3>
+          <span class="badge">${docs.length}</span>
+        </div>
+        ${renderAccountingDocumentsHtml(docs)}
+      </article>
+    </div>
   `;
 
   section.addEventListener('click', async (event) => {
@@ -415,56 +321,41 @@ function renderAccounting() {
   return section;
 }
 
+
 function renderSettings() {
   const config = getConfig();
-  const apiStatus = hasRemoteConfig() ? 'Google Sheet API พร้อมใช้งาน' : 'ยังไม่ได้ตั้งค่า API URL';
+  const apiStatus = hasRemoteConfig() ? 'พร้อมใช้งาน' : 'ยังไม่ตั้งค่า';
 
   const section = el('section');
   section.innerHTML = `
     <div class="page-title">
       <div>
         <p class="eyebrow">Settings</p>
-        <h2>ตั้งค่า Google Sheet API</h2>
+        <h2>ตั้งค่า</h2>
       </div>
-      <p class="muted">${escapeHTML(apiStatus)}</p>
+      <button class="btn" data-open-settings-modal type="button">ตั้งค่า API</button>
     </div>
 
-    <div class="grid two">
-      <form id="configForm" class="card form-card">
-        <h3>Google Apps Script Web App</h3>
-        <label>Web App URL
-          <input name="api_url" value="${escapeAttr(config.apiUrl || '')}" placeholder="https://script.google.com/macros/s/.../exec" />
-        </label>
-        <label>API Token
-          <input name="api_token" value="${escapeAttr(config.apiToken || '')}" placeholder="ใส่ token เดียวกับ Script Properties" />
-        </label>
-        <div class="form-actions">
-          <button class="btn" type="submit">บันทึก config</button>
-          <button class="btn secondary" id="initSheetsBtn" type="button">Initialize Sheets</button>
-        </div>
-      </form>
-
-      <article class="card">
-        <h3>เครื่องมือ</h3>
-        <div class="stack">
-          <button class="btn secondary" id="loadDemoBtn" type="button">โหลดข้อมูล demo local</button>
-          <button class="btn danger" id="clearLocalBtn" type="button">ล้างข้อมูล local</button>
-          <p class="muted">ถ้าตั้งค่า Web App URL แล้ว ระบบจะอ่าน/เขียน Google Sheet เป็นหลัก</p>
-        </div>
-      </article>
+    <div class="grid cards settings-cards">
+      <article class="card metric"><span>Google Sheet API</span><strong class="metric-text">${escapeHTML(apiStatus)}</strong></article>
+      <article class="card metric"><span>Web App URL</span><strong class="metric-text">${config.apiUrl ? 'ตั้งค่าแล้ว' : '-'}</strong></article>
+      <article class="card metric"><span>Local data</span><strong class="metric-text">${state.trip_runs.length} trips</strong></article>
+      <article class="card metric"><span>Version</span><strong class="metric-text">${APP_VERSION}</strong></article>
     </div>
 
     <article class="card">
-      <h3>ข้อควรระวัง</h3>
-      <ul class="bullets">
-        <li>อย่าใส่ secret จริงลง repo public</li>
-        <li>Apps Script token ใน frontend เป็น shared token สำหรับ MVP เท่านั้น ไม่ใช่ security ระดับ production</li>
-        <li>ถ้ามีข้อมูลจริง แนะนำเปลี่ยน repo เป็น Private และจำกัดสิทธิ์ Web App ตามองค์กร</li>
-      </ul>
+      <div class="section-heading">
+        <h3>เครื่องมือ</h3>
+        <div class="form-actions">
+          <button class="btn secondary small" id="initSheetsBtn" type="button">Initialize Sheets</button>
+          <button class="btn secondary small" id="loadDemoBtn" type="button">โหลด demo</button>
+          <button class="btn danger small" id="clearLocalBtn" type="button">ล้าง local</button>
+        </div>
+      </div>
     </article>
   `;
 
-  section.querySelector('#configForm').addEventListener('submit', handleSaveConfig);
+  section.querySelector('[data-open-settings-modal]').addEventListener('click', openSettingsModal);
   section.querySelector('#initSheetsBtn').addEventListener('click', handleInitSheets);
   section.querySelector('#loadDemoBtn').addEventListener('click', () => {
     seedDemoData();
@@ -481,6 +372,251 @@ function renderSettings() {
   });
 
   return section;
+}
+
+
+function openModal({ title, bodyHtml, size = 'large', onReady }) {
+  modalRoot.innerHTML = `
+    <div class="modal-backdrop" data-close-modal></div>
+    <section class="modal-card ${escapeAttr(size)}" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+      <header class="modal-header">
+        <h2>${escapeHTML(title)}</h2>
+        <button class="icon-btn" data-close-modal type="button" aria-label="ปิด">×</button>
+      </header>
+      <div class="modal-body">${bodyHtml}</div>
+    </section>
+  `;
+  modalRoot.className = 'modal-root show';
+  document.body.classList.add('modal-open');
+  const card = modalRoot.querySelector('.modal-card');
+  if (typeof onReady === 'function') onReady(card);
+  const firstInput = card.querySelector('input, select, textarea, button');
+  if (firstInput) firstInput.focus({ preventScroll: true });
+}
+
+function closeActiveModal() {
+  modalRoot.innerHTML = '';
+  modalRoot.className = 'modal-root';
+  document.body.classList.remove('modal-open');
+}
+
+function openCustomerModal() {
+  openModal({
+    title: 'เพิ่มลูกค้า',
+    size: 'medium',
+    bodyHtml: `
+      <form id="customerForm" class="form-card modal-form">
+        <label>ชื่อลูกค้า
+          <input name="name" required placeholder="ชื่อบริษัท / ลูกค้า" />
+        </label>
+        <label>เลขผู้เสียภาษี
+          <input name="tax_id" />
+        </label>
+        <label>ที่อยู่ใบกำกับภาษี
+          <textarea name="billing_address" rows="3"></textarea>
+        </label>
+        <div class="form-grid">
+          <label>รูปแบบรายได้
+            <select name="revenue_type">
+              ${optionsHtml(REVENUE_TYPES)}
+            </select>
+          </label>
+          <label>Credit term
+            <input name="credit_term_days" type="number" min="0" value="30" />
+          </label>
+          <label>WHT %
+            <input name="default_wht_rate" type="number" step="0.01" min="0" value="1" />
+          </label>
+          <label>VAT %
+            <input name="default_vat_rate" type="number" step="0.01" min="0" value="0" />
+          </label>
+        </div>
+        <footer class="modal-actions">
+          <button class="btn secondary" data-close-modal type="button">ยกเลิก</button>
+          <button class="btn" type="submit">บันทึก</button>
+        </footer>
+      </form>
+    `,
+    onReady: (modal) => {
+      modal.querySelector('#customerForm').addEventListener('submit', handleCreateCustomer);
+    }
+  });
+}
+
+function openSettingsModal() {
+  const config = getConfig();
+  openModal({
+    title: 'ตั้งค่า API',
+    size: 'medium',
+    bodyHtml: `
+      <form id="configForm" class="form-card modal-form">
+        <label>Web App URL
+          <input name="api_url" value="${escapeAttr(config.apiUrl || '')}" placeholder="https://script.google.com/macros/s/.../exec" />
+        </label>
+        <label>API Token
+          <input name="api_token" value="${escapeAttr(config.apiToken || '')}" placeholder="APP_TOKEN" />
+        </label>
+        <footer class="modal-actions">
+          <button class="btn secondary" data-close-modal type="button">ยกเลิก</button>
+          <button class="btn" type="submit">บันทึก</button>
+        </footer>
+      </form>
+    `,
+    onReady: (modal) => {
+      modal.querySelector('#configForm').addEventListener('submit', handleSaveConfig);
+    }
+  });
+}
+
+function openTripModal() {
+  if (draftExpenses.length === 0) draftExpenses.push(defaultExpenseDraft());
+  if (draftSpecials.length === 0) draftSpecials.push(defaultSpecialDraft());
+
+  openModal({
+    title: 'คีย์เที่ยววิ่งงาน',
+    size: 'xlarge',
+    bodyHtml: renderTripFormHtml(),
+    onReady: (modal) => {
+      bindTripFormEvents(modal);
+      updateLiveProfitSummary(modal.querySelector('#tripForm'));
+    }
+  });
+}
+
+function openTripSummaryModal(tripId) {
+  const trip = state.trip_runs.find((item) => item.id === tripId);
+  if (!trip) return;
+  const summary = calculateTripSummary(trip, getExpensesByTrip(trip.id), getSpecialsByTrip(trip.id));
+  openModal({
+    title: `สรุป ${trip.trip_no}`,
+    size: 'medium',
+    bodyHtml: `
+      <div class="summary-meta">
+        <div><span>ลูกค้า</span><strong>${escapeHTML(trip.customer_name)}</strong></div>
+        <div><span>เส้นทาง</span><strong>${escapeHTML(trip.route_name)}</strong></div>
+        <div><span>รถ</span><strong>${escapeHTML(VEHICLE_MODES[trip.vehicle_mode] || trip.vehicle_mode)}</strong></div>
+      </div>
+      ${renderProfitSummaryHtml(summary)}
+      <footer class="modal-actions">
+        <button class="btn" data-close-modal type="button">ปิด</button>
+      </footer>
+    `
+  });
+}
+
+function renderTripFormHtml() {
+  return `
+    <form id="tripForm" class="form-card modal-form">
+      <div class="form-section">
+        <h3>ข้อมูลหลัก</h3>
+        <div class="form-grid four">
+          <label>ลูกค้า
+            <select name="customer_id" required>
+              <option value="">เลือกลูกค้า</option>
+              ${state.customers.map(c => `<option value="${escapeAttr(c.id)}">${escapeHTML(c.name)}</option>`).join('')}
+            </select>
+          </label>
+          <label>วันที่วิ่ง
+            <input name="trip_date" type="date" required value="${todayISO()}" />
+          </label>
+          <label>เส้นทาง
+            <input name="route_name" required />
+          </label>
+          <label>ประเภทรถ
+            <input name="vehicle_type" />
+          </label>
+        </div>
+
+        <div class="form-grid four">
+          <label>รูปแบบรถ
+            <select name="vehicle_mode">
+              ${optionsHtml(VEHICLE_MODES)}
+            </select>
+          </label>
+          <label>ทะเบียน / รถ
+            <input name="vehicle_no" />
+          </label>
+          <label>พขร.
+            <input name="driver_name" />
+          </label>
+          <label>ผรม. / รถร่วม
+            <input name="subcontractor_name" />
+          </label>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h3>รายรับ / รายจ่ายหลัก</h3>
+        <div class="form-grid four">
+          <label>ค่าขนส่งจากลูกค้า
+            <input name="freight_income_amount" type="number" step="0.01" min="0" value="0" />
+          </label>
+          <label>WHT รับ %
+            <input name="freight_wht_rate" type="number" step="0.01" min="0" value="1" />
+          </label>
+          <label>VAT รับ %
+            <input name="freight_vat_rate" type="number" step="0.01" min="0" value="0" />
+          </label>
+          <label>ค่าเที่ยว พขร.
+            <input name="driver_trip_pay" type="number" step="0.01" min="0" value="0" />
+          </label>
+        </div>
+
+        <div class="form-grid four">
+          <label>ค่าจ้างรถร่วม
+            <input name="subcontractor_pay_amount" type="number" step="0.01" min="0" value="0" />
+          </label>
+          <label>WHT จ่ายรถร่วม %
+            <input name="subcontractor_wht_rate" type="number" step="0.01" min="0" value="0" />
+          </label>
+          <label>VAT จ่ายรถร่วม %
+            <input name="subcontractor_vat_rate" type="number" step="0.01" min="0" value="0" />
+          </label>
+          <label>หมายเหตุ
+            <input name="note" />
+          </label>
+        </div>
+      </div>
+
+      <div class="modal-split">
+        <section class="panel flat">
+          <div class="section-heading">
+            <h3>ค่าใช้จ่ายปกติ</h3>
+            <button class="btn secondary small" id="addExpenseBtn" type="button">+ เพิ่ม</button>
+          </div>
+          <div id="expenseDraftList">${draftExpenses.map(renderExpenseDraftHtml).join('')}</div>
+        </section>
+
+        <section class="panel flat">
+          <div class="section-heading">
+            <h3>ค่าพิเศษ</h3>
+            <button class="btn secondary small" id="addSpecialBtn" type="button">+ เพิ่ม</button>
+          </div>
+          <div id="specialDraftList">${draftSpecials.map(renderSpecialDraftHtml).join('')}</div>
+        </section>
+      </div>
+
+      <section class="panel flat">
+        <div class="section-heading">
+          <h3>สรุปกำไรขาดทุน</h3>
+        </div>
+        <div id="liveProfitSummary"></div>
+      </section>
+
+      <footer class="modal-actions sticky-actions">
+        <button class="btn secondary" id="clearTripDraftBtn" type="button">ล้างแบบร่าง</button>
+        <button class="btn secondary" data-close-modal type="button">ยกเลิก</button>
+        <button class="btn" type="submit">บันทึกเที่ยววิ่ง</button>
+      </footer>
+    </form>
+  `;
+}
+
+function renderTripDraftLists(root) {
+  const expenseList = root.querySelector('#expenseDraftList');
+  const specialList = root.querySelector('#specialDraftList');
+  if (expenseList) expenseList.innerHTML = draftExpenses.map(renderExpenseDraftHtml).join('');
+  if (specialList) specialList.innerHTML = draftSpecials.map(renderSpecialDraftHtml).join('');
 }
 
 function bindTripFormEvents(section) {
@@ -507,23 +643,35 @@ function bindTripFormEvents(section) {
     updateLiveProfitSummary(form);
   });
 
-  section.querySelector('#addExpenseBtn').addEventListener('click', () => {
-    collectDraftRowsFromDom(section);
-    draftExpenses.push(defaultExpenseDraft());
-    renderPage('trips');
-  });
+  const addExpenseBtn = section.querySelector('#addExpenseBtn');
+  if (addExpenseBtn) {
+    addExpenseBtn.addEventListener('click', () => {
+      collectDraftRowsFromDom(section);
+      draftExpenses.push(defaultExpenseDraft());
+      renderTripDraftLists(section);
+      updateLiveProfitSummary(form);
+    });
+  }
 
-  section.querySelector('#addSpecialBtn').addEventListener('click', () => {
-    collectDraftRowsFromDom(section);
-    draftSpecials.push(defaultSpecialDraft());
-    renderPage('trips');
-  });
+  const addSpecialBtn = section.querySelector('#addSpecialBtn');
+  if (addSpecialBtn) {
+    addSpecialBtn.addEventListener('click', () => {
+      collectDraftRowsFromDom(section);
+      draftSpecials.push(defaultSpecialDraft());
+      renderTripDraftLists(section);
+      updateLiveProfitSummary(form);
+    });
+  }
 
-  section.querySelector('#clearTripDraftBtn').addEventListener('click', () => {
-    draftExpenses = [defaultExpenseDraft()];
-    draftSpecials = [defaultSpecialDraft()];
-    renderPage('trips');
-  });
+  const clearTripDraftBtn = section.querySelector('#clearTripDraftBtn');
+  if (clearTripDraftBtn) {
+    clearTripDraftBtn.addEventListener('click', () => {
+      draftExpenses = [defaultExpenseDraft()];
+      draftSpecials = [defaultSpecialDraft()];
+      renderTripDraftLists(section);
+      updateLiveProfitSummary(form);
+    });
+  }
 
   section.addEventListener('click', (event) => {
     const expenseRemove = event.target.closest('[data-remove-expense]');
@@ -531,7 +679,8 @@ function bindTripFormEvents(section) {
       collectDraftRowsFromDom(section);
       draftExpenses.splice(Number(expenseRemove.dataset.removeExpense), 1);
       if (draftExpenses.length === 0) draftExpenses.push(defaultExpenseDraft());
-      renderPage('trips');
+      renderTripDraftLists(section);
+      updateLiveProfitSummary(form);
       return;
     }
 
@@ -540,16 +689,12 @@ function bindTripFormEvents(section) {
       collectDraftRowsFromDom(section);
       draftSpecials.splice(Number(specialRemove.dataset.removeSpecial), 1);
       if (draftSpecials.length === 0) draftSpecials.push(defaultSpecialDraft());
-      renderPage('trips');
-      return;
-    }
-
-    const approveButton = event.target.closest('[data-approve-trip]');
-    if (approveButton) {
-      handleApproveTrip(approveButton.dataset.approveTrip);
+      renderTripDraftLists(section);
+      updateLiveProfitSummary(form);
     }
   });
 }
+
 
 async function handleCreateCustomer(event) {
   event.preventDefault();
@@ -580,6 +725,7 @@ async function handleCreateCustomer(event) {
   });
 
   form.reset();
+  closeActiveModal();
   showToast('บันทึกลูกค้าแล้ว');
   renderPage('customers');
 }
@@ -653,6 +799,7 @@ async function handleCreateTrip(event) {
 
   draftExpenses = [defaultExpenseDraft()];
   draftSpecials = [defaultSpecialDraft()];
+  closeActiveModal();
   showToast('บันทึกเที่ยววิ่งแล้ว');
   renderPage('trips');
 }
@@ -742,6 +889,7 @@ async function handleSaveConfig(event) {
     apiToken: values.api_token.trim()
   };
   localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  closeActiveModal();
   showToast('บันทึก config แล้ว');
   await loadRemoteData(true);
   renderPage('settings');
@@ -1075,6 +1223,12 @@ function renderTripTableHtml(trips, withActions) {
         <tbody>
           ${trips.map((trip) => {
             const summary = calculateTripSummary(trip, getExpensesByTrip(trip.id), getSpecialsByTrip(trip.id));
+            const actions = withActions
+              ? `<div class="row-actions">
+                   <button class="btn secondary small" data-view-trip-summary="${escapeAttr(trip.id)}" type="button">สรุป</button>
+                   ${trip.status === 'draft' ? `<button class="btn small" data-approve-trip="${escapeAttr(trip.id)}" type="button">อนุมัติ</button>` : '<span class="muted">ส่งต่อแล้ว</span>'}
+                 </div>`
+              : '';
             return `
               <tr>
                 <td>${escapeHTML(trip.trip_no)}</td>
@@ -1084,10 +1238,7 @@ function renderTripTableHtml(trips, withActions) {
                 <td>${escapeHTML(VEHICLE_MODES[trip.vehicle_mode] || trip.vehicle_mode)}</td>
                 <td><span class="status ${escapeAttr(trip.status)}">${statusLabel(trip.status)}</span></td>
                 <td>${money(summary.grossProfit)}</td>
-                ${withActions ? `<td>${trip.status === 'draft' ? `<button class="btn small" data-approve-trip="${escapeAttr(trip.id)}" type="button">อนุมัติ</button>` : '<span class="muted">ส่งต่อแล้ว</span>'}</td>` : ''}
-              </tr>
-              <tr class="detail-row">
-                <td colspan="${withActions ? '8' : '7'}">${renderProfitSummaryHtml(summary)}</td>
+                ${withActions ? `<td>${actions}</td>` : ''}
               </tr>
             `;
           }).join('')}
@@ -1096,6 +1247,7 @@ function renderTripTableHtml(trips, withActions) {
     </div>
   `;
 }
+
 
 function renderSettlementTableHtml(items, tableName) {
   if (!items.length) return emptyStateHtml('ยังไม่มีรายการ settlement', 'เมื่ออนุมัติเที่ยววิ่ง ระบบจะส่งรายการมาที่นี่');
@@ -1619,10 +1771,10 @@ function emptyStateHtml(title, description) {
   return `
     <div class="empty-state">
       <h3>${escapeHTML(title)}</h3>
-      <p>${escapeHTML(description)}</p>
     </div>
   `;
 }
+
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));

@@ -1,5 +1,5 @@
 /**
- * Transport ERP Lite v0.2.1-google-sheets
+ * Transport ERP Lite v0.3.0-modal-layout
  * Google Apps Script backend for Google Sheet database.
  *
  * Setup:
@@ -73,7 +73,7 @@ function doGet() {
   return jsonOutput({
     ok: true,
     name: 'Transport ERP Lite API',
-    version: 'v0.2.1-google-sheets',
+    version: 'v0.3.0-modal-layout',
     time: new Date().toISOString()
   });
 }
