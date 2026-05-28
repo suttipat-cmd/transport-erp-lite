@@ -1,5 +1,5 @@
 /**
- * Transport ERP Lite v0.3.0-modal-layout
+ * Transport ERP Lite v0.4.0-performance-layout
  * Google Apps Script backend for Google Sheet database.
  *
  * Setup:
@@ -19,10 +19,10 @@ const TABLE_HEADERS = {
   ],
   trip_runs: [
     'id', 'trip_no', 'customer_id', 'customer_name', 'trip_date',
-    'route_name', 'vehicle_type', 'vehicle_mode', 'vehicle_no',
-    'driver_name', 'subcontractor_name', 'freight_income_amount',
-    'freight_wht_rate', 'freight_vat_rate', 'driver_trip_pay',
-    'subcontractor_pay_amount', 'subcontractor_wht_rate',
+    'origin_name', 'destination_name', 'route_name', 'vehicle_type',
+    'vehicle_mode', 'vehicle_no', 'driver_name', 'subcontractor_name',
+    'freight_income_amount', 'freight_wht_rate', 'freight_vat_rate',
+    'driver_trip_pay', 'subcontractor_pay_amount', 'subcontractor_wht_rate',
     'subcontractor_vat_rate', 'note', 'status', 'approved_at',
     'created_at', 'updated_at'
   ],
@@ -73,7 +73,7 @@ function doGet() {
   return jsonOutput({
     ok: true,
     name: 'Transport ERP Lite API',
-    version: 'v0.3.0-modal-layout',
+    version: 'v0.4.0-performance-layout',
     time: new Date().toISOString()
   });
 }
@@ -87,10 +87,9 @@ function doPost(e) {
     const body = parseBody(e);
     assertToken(body.token);
 
-    ensureSheets();
-
     const action = body.action;
     const payload = body.payload || {};
+    ensureSchema(action === 'initSheets');
     let result;
 
     if (action === 'initSheets') {
@@ -101,13 +100,17 @@ function doPost(e) {
     } else if (action === 'createCustomer') {
       appendObject('customers', payload.customer);
       addAudit('createCustomer', 'customers', payload.customer.id, payload.customer.name);
-      result = readAllTables();
+      result = { customer: payload.customer };
     } else if (action === 'createTrip') {
       appendObject('trip_runs', payload.trip);
       appendObjects('trip_expenses', payload.expenses || []);
       appendObjects('trip_special_items', payload.specials || []);
       addAudit('createTrip', 'trip_runs', payload.trip.id, payload.trip.trip_no);
-      result = readAllTables();
+      result = {
+        trip: payload.trip,
+        expenses: payload.expenses || [],
+        specials: payload.specials || []
+      };
     } else if (action === 'approveTrip') {
       updateById('trip_runs', payload.trip_id, {
         status: 'approved',
@@ -121,7 +124,7 @@ function doPost(e) {
       appendObjects('subcontractor_settlement_items', generated.subcontractor_settlement_items || []);
 
       addAudit('approveTrip', 'trip_runs', payload.trip_id, 'Approved trip and generated queue/settlement');
-      result = readAllTables();
+      result = generated;
     } else if (action === 'approveSettlementItem') {
       const tableName = payload.table_name;
       if (!TABLE_HEADERS[tableName]) throw new Error('Invalid settlement table');
@@ -133,7 +136,7 @@ function doPost(e) {
       appendObject('accounting_queue_items', payload.queue_item);
 
       addAudit('approveSettlementItem', tableName, payload.item_id, 'Approved settlement item');
-      result = readAllTables();
+      result = { queue_item: payload.queue_item };
     } else if (action === 'createAccountingDocument') {
       updateById('accounting_queue_items', payload.queue_id, {
         status: 'documented',
@@ -142,7 +145,7 @@ function doPost(e) {
       appendObject('accounting_documents', payload.document);
 
       addAudit('createAccountingDocument', 'accounting_documents', payload.document.id, payload.document.document_no);
-      result = readAllTables();
+      result = { document: payload.document };
     } else {
       throw new Error('Unknown action: ' + action);
     }
@@ -180,6 +183,16 @@ function assertToken(token) {
   }
   if (token !== expected) {
     throw new Error('Invalid API token');
+  }
+}
+
+
+function ensureSchema(force) {
+  const props = PropertiesService.getScriptProperties();
+  const schemaVersion = 'v0.4.0';
+  if (force || props.getProperty('SCHEMA_VERSION') !== schemaVersion) {
+    ensureSheets();
+    props.setProperty('SCHEMA_VERSION', schemaVersion);
   }
 }
 
@@ -254,24 +267,26 @@ function readTable(tableName) {
 }
 
 function appendObjects(tableName, objects) {
-  (objects || []).forEach(function(object) {
-    appendObject(tableName, object);
-  });
-}
-
-function appendObject(tableName, object) {
-  if (!object) return;
+  const rows = objects || [];
+  if (!rows.length) return;
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(tableName);
   if (!sheet) throw new Error('Sheet not found: ' + tableName);
 
   const headers = getHeaders(sheet);
-  const row = headers.map(function(header) {
-    return object[header] !== undefined ? object[header] : '';
+  const values = rows.map(function(object) {
+    return headers.map(function(header) {
+      return object && object[header] !== undefined ? object[header] : '';
+    });
   });
 
-  sheet.appendRow(row);
+  sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
+}
+
+function appendObject(tableName, object) {
+  if (!object) return;
+  appendObjects(tableName, [object]);
 }
 
 function updateById(tableName, id, patch) {

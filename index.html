@@ -8,26 +8,27 @@
 </head>
 <body>
   <div class="app-layout">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="brand">
         <span class="brand-mark">T</span>
-        <div>
+        <div class="brand-text">
           <strong>Transport ERP</strong>
           <small id="versionBadge"></small>
         </div>
+        <button id="btnSidebarToggle" type="button" class="icon-btn sidebar-toggle" aria-label="ย่อเมนู" aria-expanded="true">☰</button>
       </div>
 
       <nav class="tabs" aria-label="Main navigation">
-        <button class="tab active" data-page="dashboard" type="button">Dashboard</button>
-        <button class="tab" data-page="customers" type="button">ลูกค้า</button>
-        <button class="tab" data-page="trips" type="button">เที่ยววิ่งงาน</button>
-        <button class="tab" data-page="hr" type="button">HR Settlement</button>
-        <button class="tab" data-page="subcontractor" type="button">รถร่วม Settlement</button>
-        <button class="tab" data-page="accounting" type="button">บัญชี</button>
-        <button class="tab" data-page="settings" type="button">ตั้งค่า</button>
+        <button class="tab active" data-page="dashboard" type="button"><span class="nav-icon">D</span><span class="nav-label">Dashboard</span></button>
+        <button class="tab" data-page="customers" type="button"><span class="nav-icon">C</span><span class="nav-label">ลูกค้า</span></button>
+        <button class="tab" data-page="trips" type="button"><span class="nav-icon">T</span><span class="nav-label">เที่ยววิ่งงาน</span></button>
+        <button class="tab" data-page="hr" type="button"><span class="nav-icon">H</span><span class="nav-label">HR Settlement</span></button>
+        <button class="tab" data-page="subcontractor" type="button"><span class="nav-icon">S</span><span class="nav-label">รถร่วม Settlement</span></button>
+        <button class="tab" data-page="accounting" type="button"><span class="nav-icon">A</span><span class="nav-label">บัญชี</span></button>
+        <button class="tab" data-page="settings" type="button"><span class="nav-icon">⚙</span><span class="nav-label">ตั้งค่า</span></button>
       </nav>
 
-      <button id="btnSync" type="button" class="btn secondary sidebar-sync">Sync</button>
+      <button id="btnSync" type="button" class="btn secondary sidebar-sync"><span class="nav-icon">↻</span><span class="nav-label">Sync</span></button>
     </aside>
 
     <div class="main-area">
@@ -36,6 +37,12 @@
   </div>
 
   <div id="modalRoot" class="modal-root"></div>
+  <div id="loadingOverlay" class="loading-overlay" aria-hidden="true">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <strong id="loadingText">กำลังโหลด...</strong>
+    </div>
+  </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="script.js"></script>

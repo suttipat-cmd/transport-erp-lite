@@ -1,9 +1,10 @@
-/* Transport ERP Lite v0.3.0-modal-layout */
+/* Transport ERP Lite v0.4.0-performance-layout */
 'use strict';
 
-const APP_VERSION = 'v0.3.0-modal-layout';
+const APP_VERSION = 'v0.4.0-performance-layout';
 const STORAGE_KEY = 'transport_erp_lite_v020';
 const CONFIG_KEY = 'transport_erp_lite_config_v020';
+const UI_KEY = 'transport_erp_lite_ui_v040';
 
 const TABLES = [
   'customers',
@@ -51,43 +52,96 @@ const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
 const versionBadge = document.getElementById('versionBadge');
 const modalRoot = document.getElementById('modalRoot');
+const loadingOverlay = document.getElementById('loadingOverlay');
+const loadingText = document.getElementById('loadingText');
+const sidebarToggle = document.getElementById('btnSidebarToggle');
 
 document.addEventListener('DOMContentLoaded', initApp);
 
 function initApp() {
   versionBadge.textContent = APP_VERSION;
+  applyUiState();
   bindGlobalEvents();
   loadLocalState();
-  loadRemoteData(false).finally(() => renderPage('dashboard'));
+  loadRemoteData(false, 'กำลังโหลดข้อมูล...').finally(() => renderPage('dashboard'));
 }
 
 function bindGlobalEvents() {
   document.querySelector('.tabs').addEventListener('click', (event) => {
     const button = event.target.closest('[data-page]');
-    if (!button) return;
+    if (!button || isBusy) return;
     renderPage(button.dataset.page);
   });
 
   document.getElementById('btnSync').addEventListener('click', async () => {
-    await loadRemoteData(true);
+    await loadRemoteData(true, 'กำลัง Sync...');
     renderPage(currentPage);
   });
 
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener('click', toggleSidebar);
+  }
+
   modalRoot.addEventListener('click', (event) => {
-    if (event.target.matches('[data-close-modal]')) {
+    if (event.target.matches('[data-close-modal]') && !isBusy) {
       closeActiveModal();
     }
   });
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && modalRoot.classList.contains('show')) {
+    if (event.key === 'Escape' && modalRoot.classList.contains('show') && !isBusy) {
       closeActiveModal();
     }
   });
 }
 
 
+function applyUiState() {
+  const ui = getUiState();
+  document.body.classList.toggle('sidebar-collapsed', Boolean(ui.sidebarCollapsed));
+  if (sidebarToggle) {
+    sidebarToggle.setAttribute('aria-expanded', String(!ui.sidebarCollapsed));
+    sidebarToggle.setAttribute('aria-label', ui.sidebarCollapsed ? 'ขยายเมนู' : 'ย่อเมนู');
+  }
+}
+
+function toggleSidebar() {
+  const ui = getUiState();
+  ui.sidebarCollapsed = !ui.sidebarCollapsed;
+  localStorage.setItem(UI_KEY, JSON.stringify(ui));
+  applyUiState();
+}
+
+function getUiState() {
+  try {
+    return JSON.parse(localStorage.getItem(UI_KEY) || '{}');
+  } catch (error) {
+    return {};
+  }
+}
+
+function routeDisplay(trip) {
+  const origin = String(trip.origin_name || '').trim();
+  const destination = String(trip.destination_name || '').trim();
+  if (origin && destination) return `${origin} → ${destination}`;
+  if (origin) return origin;
+  if (destination) return destination;
+  return trip.route_name || '-';
+}
+
+function normalizeTripRecord(trip) {
+  if (!trip) return trip;
+  const next = { ...trip };
+  next.origin_name = next.origin_name || '';
+  next.destination_name = next.destination_name || '';
+  next.route_name = next.route_name || routeDisplay(next);
+  return next;
+}
+
+
+
 function renderPage(page) {
+  if (isBusy) return;
   currentPage = page;
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.classList.toggle('active', tab.dataset.page === page);
@@ -493,7 +547,8 @@ function openTripSummaryModal(tripId) {
     bodyHtml: `
       <div class="summary-meta">
         <div><span>ลูกค้า</span><strong>${escapeHTML(trip.customer_name)}</strong></div>
-        <div><span>เส้นทาง</span><strong>${escapeHTML(trip.route_name)}</strong></div>
+        <div><span>ต้นทาง</span><strong>${escapeHTML(trip.origin_name || routeDisplay(trip))}</strong></div>
+        <div><span>ปลายทาง</span><strong>${escapeHTML(trip.destination_name || '-')}</strong></div>
         <div><span>รถ</span><strong>${escapeHTML(VEHICLE_MODES[trip.vehicle_mode] || trip.vehicle_mode)}</strong></div>
       </div>
       ${renderProfitSummaryHtml(summary)}
@@ -519,8 +574,11 @@ function renderTripFormHtml() {
           <label>วันที่วิ่ง
             <input name="trip_date" type="date" required value="${todayISO()}" />
           </label>
-          <label>เส้นทาง
-            <input name="route_name" required />
+          <label>ต้นทาง
+            <input name="origin_name" required />
+          </label>
+          <label>ปลายทาง
+            <input name="destination_name" required />
           </label>
           <label>ประเภทรถ
             <input name="vehicle_type" />
@@ -720,10 +778,11 @@ async function handleCreateCustomer(event) {
     return;
   }
 
-  await executeMutation('createCustomer', { customer }, () => {
+  const ok = await executeMutation('createCustomer', { customer }, () => {
     state.customers.push(customer);
-  });
+  }, 'กำลังบันทึกลูกค้า...');
 
+  if (!ok) return;
   form.reset();
   closeActiveModal();
   showToast('บันทึกลูกค้าแล้ว');
@@ -742,13 +801,19 @@ async function handleCreateTrip(event) {
     return;
   }
 
+  const originName = values.origin_name.trim();
+  const destinationName = values.destination_name.trim();
+  const routeName = `${originName} → ${destinationName}`;
+
   const trip = {
     id: makeId('TRIP'),
     trip_no: nextRunningNo('TRIP', state.trip_runs.length + 1),
     customer_id: customer.id,
     customer_name: customer.name,
     trip_date: values.trip_date,
-    route_name: values.route_name.trim(),
+    origin_name: originName,
+    destination_name: destinationName,
+    route_name: routeName,
     vehicle_type: values.vehicle_type.trim(),
     vehicle_mode: values.vehicle_mode,
     vehicle_no: values.vehicle_no.trim(),
@@ -768,8 +833,8 @@ async function handleCreateTrip(event) {
     updated_at: nowISO()
   };
 
-  if (!trip.trip_date || !trip.route_name) {
-    showToast('กรุณากรอกวันที่และเส้นทาง', 'error');
+  if (!trip.trip_date || !trip.origin_name || !trip.destination_name) {
+    showToast('กรุณากรอกวันที่ ต้นทาง และปลายทาง', 'error');
     return;
   }
 
@@ -788,15 +853,16 @@ async function handleCreateTrip(event) {
     }));
 
   const specials = draftSpecials
-    .filter((item) => item.description || item.customer_charge_amount > 0 || item.payable_amount > 0)
+    .filter((item) => item.description || toNumber(item.customer_charge_rate) > 0 || toNumber(item.payable_rate) > 0)
     .map((item) => normalizeSpecialDraft(item, trip));
 
-  await executeMutation('createTrip', { trip, expenses, specials }, () => {
+  const ok = await executeMutation('createTrip', { trip, expenses, specials }, () => {
     state.trip_runs.push(trip);
     state.trip_expenses.push(...expenses);
     state.trip_special_items.push(...specials);
-  });
+  }, 'กำลังบันทึกเที่ยววิ่ง...');
 
+  if (!ok) return;
   draftExpenses = [defaultExpenseDraft()];
   draftSpecials = [defaultSpecialDraft()];
   closeActiveModal();
@@ -817,15 +883,16 @@ async function handleApproveTrip(tripId) {
 
   const generated = generateItemsOnTripApproval(trip);
 
-  await executeMutation('approveTrip', { trip_id: tripId, generated }, () => {
+  const ok = await executeMutation('approveTrip', { trip_id: tripId, generated }, () => {
     trip.status = 'approved';
     trip.approved_at = nowISO();
     trip.updated_at = nowISO();
     state.accounting_queue_items.push(...generated.accounting_queue_items);
     state.hr_settlement_items.push(...generated.hr_settlement_items);
     state.subcontractor_settlement_items.push(...generated.subcontractor_settlement_items);
-  });
+  }, 'กำลังอนุมัติเที่ยววิ่ง...');
 
+  if (!ok) return;
   showToast('อนุมัติเที่ยววิ่งและส่งต่อแล้ว');
   renderPage('trips');
 }
@@ -836,12 +903,13 @@ async function handleApproveSettlementItem(tableName, itemId) {
 
   const queueItem = buildAccountingQueueFromSettlement(item, tableName);
 
-  await executeMutation('approveSettlementItem', { table_name: tableName, item_id: itemId, queue_item: queueItem }, () => {
+  const ok = await executeMutation('approveSettlementItem', { table_name: tableName, item_id: itemId, queue_item: queueItem }, () => {
     item.status = 'approved';
     item.approved_at = nowISO();
     state.accounting_queue_items.push(queueItem);
-  });
+  }, 'กำลังส่งบัญชี...');
 
+  if (!ok) return;
   showToast('อนุมัติ settlement และส่งบัญชีแล้ว');
   renderPage(currentPage);
 }
@@ -871,12 +939,13 @@ async function handleCreateAccountingDocument(queueId) {
     created_at: nowISO()
   };
 
-  await executeMutation('createAccountingDocument', { queue_id: queueId, document: doc }, () => {
+  const ok = await executeMutation('createAccountingDocument', { queue_id: queueId, document: doc }, () => {
     item.status = 'documented';
     item.document_id = doc.id;
     state.accounting_documents.push(doc);
-  });
+  }, 'กำลังสร้างเอกสาร...');
 
+  if (!ok) return;
   showToast(`สร้างเอกสาร ${doc.document_no} แล้ว`);
   renderPage('accounting');
 }
@@ -896,12 +965,16 @@ async function handleSaveConfig(event) {
 }
 
 async function handleInitSheets() {
+  if (isBusy) return;
+  setBusy(true, 'กำลัง Initialize Sheets...');
   try {
     await apiCall('initSheets', {});
     showToast('Initialize Google Sheets แล้ว');
-    await loadRemoteData(true);
+    setBusy(false);
+    await loadRemoteData(true, 'กำลังโหลดข้อมูล...');
   } catch (error) {
     showToast(error.message, 'error');
+    setBusy(false);
   }
 }
 
@@ -921,7 +994,7 @@ function generateItemsOnTripApproval(trip) {
       document_type_hint: 'BILL',
       party_type: 'customer',
       party_name: trip.customer_name,
-      description: `${trip.trip_no} ค่าขนส่ง ${trip.route_name}`,
+      description: `${trip.trip_no} ค่าขนส่ง ${routeDisplay(trip)}`,
       amount_before_vat: trip.freight_income_amount,
       vat_rate: trip.freight_vat_rate,
       wht_rate: trip.freight_wht_rate
@@ -1217,7 +1290,7 @@ function renderTripTableHtml(trips, withActions) {
       <table>
         <thead>
           <tr>
-            <th>เลขที่</th><th>วันที่</th><th>ลูกค้า</th><th>เส้นทาง</th><th>รถ</th><th>สถานะ</th><th>กำไรขั้นต้น</th>${withActions ? '<th>Action</th>' : ''}
+            <th>เลขที่</th><th>วันที่</th><th>ลูกค้า</th><th>ต้นทาง</th><th>ปลายทาง</th><th>รถ</th><th>สถานะ</th><th>กำไรขั้นต้น</th>${withActions ? '<th>Action</th>' : ''}
           </tr>
         </thead>
         <tbody>
@@ -1232,9 +1305,10 @@ function renderTripTableHtml(trips, withActions) {
             return `
               <tr>
                 <td>${escapeHTML(trip.trip_no)}</td>
-                <td>${escapeHTML(trip.trip_date)}</td>
+                <td>${formatDate(trip.trip_date)}</td>
                 <td>${escapeHTML(trip.customer_name)}</td>
-                <td>${escapeHTML(trip.route_name)}</td>
+                <td>${escapeHTML(trip.origin_name || routeDisplay(trip))}</td>
+                <td>${escapeHTML(trip.destination_name || '-')}</td>
                 <td>${escapeHTML(VEHICLE_MODES[trip.vehicle_mode] || trip.vehicle_mode)}</td>
                 <td><span class="status ${escapeAttr(trip.status)}">${statusLabel(trip.status)}</span></td>
                 <td>${money(summary.grossProfit)}</td>
@@ -1545,23 +1619,22 @@ function defaultSpecialDraft() {
   };
 }
 
-async function executeMutation(action, payload, localMutation) {
-  if (isBusy) return;
-  setBusy(true);
+async function executeMutation(action, payload, localMutation, loadingMessage = 'กำลังบันทึก...') {
+  if (isBusy) return false;
+  setBusy(true, loadingMessage);
   try {
     if (hasRemoteConfig()) {
-      const result = await apiCall(action, payload);
-      if (result && result.data) {
-        mergeRemoteState(result.data);
-      } else {
-        await loadRemoteData(false);
-      }
+      await apiCall(action, payload);
+      localMutation();
+      saveLocalState();
     } else {
       localMutation();
       saveLocalState();
     }
+    return true;
   } catch (error) {
     showToast(error.message || 'เกิดข้อผิดพลาด', 'error');
+    return false;
   } finally {
     setBusy(false);
   }
@@ -1598,15 +1671,19 @@ async function apiCall(action, payload) {
   return json;
 }
 
-async function loadRemoteData(showMessage) {
+async function loadRemoteData(showMessage, loadingMessage = 'กำลังโหลดข้อมูล...') {
   if (!hasRemoteConfig()) return;
+  const shouldShowLoading = showMessage || Boolean(loadingMessage);
+  if (shouldShowLoading) setBusy(true, loadingMessage);
   try {
     const result = await apiCall('listAll', {});
     mergeRemoteState(result.data);
     saveLocalState();
-    if (showMessage) showToast('Sync จาก Google Sheet แล้ว');
+    if (showMessage) showToast('Sync สำเร็จ');
   } catch (error) {
     if (showMessage) showToast(error.message, 'error');
+  } finally {
+    if (shouldShowLoading) setBusy(false);
   }
 }
 
@@ -1616,6 +1693,7 @@ function mergeRemoteState(data) {
   TABLES.forEach((table) => {
     next[table] = Array.isArray(data[table]) ? data[table] : [];
   });
+  next.trip_runs = next.trip_runs.map(normalizeTripRecord);
   state = next;
 }
 
@@ -1627,6 +1705,7 @@ function loadLocalState() {
   }
   try {
     state = { ...clone(DEFAULT_STATE), ...JSON.parse(raw) };
+    state.trip_runs = state.trip_runs.map(normalizeTripRecord);
   } catch (error) {
     state = clone(DEFAULT_STATE);
   }
@@ -1725,11 +1804,33 @@ function formatPercent(value) {
   return `${toNumber(value).toLocaleString('th-TH')}%`;
 }
 
+function formatDate(value) {
+  if (!value) return '-';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+    const [year, month, day] = String(value).split('-');
+    return `${day}/${month}/${year}`;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return [
+    String(date.getDate()).padStart(2, '0'),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    date.getFullYear()
+  ].join('/');
+}
+
+function formatTime(value) {
+  if (!value) return '-';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
 function formatDateTime(value) {
   if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('th-TH');
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return `${formatDate(date)} ${formatTime(date)}`;
 }
 
 function todayISO() {
@@ -1780,11 +1881,22 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function setBusy(value) {
+function setBusy(value, message = 'กำลังโหลด...') {
   isBusy = value;
+  document.body.classList.toggle('is-loading', value);
+  if (loadingOverlay) {
+    loadingOverlay.classList.toggle('show', value);
+    loadingOverlay.setAttribute('aria-hidden', String(!value));
+  }
+  if (loadingText) loadingText.textContent = message;
   document.querySelectorAll('button, input, select, textarea').forEach((element) => {
-    if (value) element.setAttribute('aria-busy', 'true');
-    else element.removeAttribute('aria-busy');
+    if (value) {
+      element.setAttribute('aria-busy', 'true');
+      element.setAttribute('disabled', 'disabled');
+    } else {
+      element.removeAttribute('aria-busy');
+      element.removeAttribute('disabled');
+    }
   });
 }
 
