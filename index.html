@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Transport ERP Lite</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <p class="eyebrow">Transport ERP Lite</p>
+      <h1>ระบบคีย์เที่ยววิ่ง / Settlement / บัญชี</h1>
+    </div>
+    <div class="header-actions">
+      <span id="versionBadge" class="badge"></span>
+      <button id="btnSync" type="button" class="btn secondary">Sync</button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Main navigation">
+    <button class="tab active" data-page="dashboard" type="button">Dashboard</button>
+    <button class="tab" data-page="customers" type="button">ลูกค้า</button>
+    <button class="tab" data-page="trips" type="button">เที่ยววิ่งงาน</button>
+    <button class="tab" data-page="hr" type="button">HR Settlement</button>
+    <button class="tab" data-page="subcontractor" type="button">รถร่วม Settlement</button>
+    <button class="tab" data-page="accounting" type="button">บัญชี</button>
+    <button class="tab" data-page="settings" type="button">ตั้งค่า</button>
+  </nav>
+
+  <main id="app" class="app-shell" tabindex="-1"></main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <template id="emptyStateTemplate">
+    <div class="empty-state">
+      <h3>ยังไม่มีข้อมูล</h3>
+      <p>เริ่มจากเพิ่มลูกค้า แล้วคีย์เที่ยววิ่งงาน</p>
+    </div>
+  </template>
+
+  <script src="script.js"></script>
+</body>
+</html>
